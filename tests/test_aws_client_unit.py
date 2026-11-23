@@ -337,3 +337,49 @@ class TestAwsResponseMetaUsage(unittest.TestCase):
     def test_missing_meta_and_headers_does_not_invent_negative_usage(self) -> None:
         parsed = self._rewrite("chat", {"text": "hello"})
         self.assertNotIn("meta", parsed)
+
+    def test_empty_bedrock_header_falls_back_to_body_counts(self) -> None:
+        parsed = self._rewrite(
+            "chat",
+            {
+                "text": "hello",
+                "meta": {
+                    "billed_units": {"input_tokens": 4, "output_tokens": 9},
+                    "tokens": {"input_tokens": 4, "output_tokens": 9},
+                },
+            },
+            headers={
+                "X-Amzn-Bedrock-Input-Token-Count": "",
+                "X-Amzn-Bedrock-Output-Token-Count": "7",
+            },
+        )
+        billed = parsed["meta"]["billed_units"]
+        self.assertEqual(billed["input_tokens"], 4)
+        self.assertEqual(billed["output_tokens"], 7)
+        self.assertEqual(parsed["meta"]["tokens"]["input_tokens"], 4)
+        self.assertEqual(parsed["meta"]["tokens"]["output_tokens"], 7)
+
+    def test_non_dict_meta_in_body_is_replaced_by_header_counts(self) -> None:
+        parsed = self._rewrite(
+            "chat",
+            {"text": "hello", "meta": ["oops"]},
+            headers={"X-Amzn-Bedrock-Input-Token-Count": "5"},
+        )
+        self.assertEqual(parsed["meta"]["billed_units"]["input_tokens"], 5)
+        self.assertEqual(parsed["meta"]["tokens"]["input_tokens"], 5)
+
+    def test_body_tokens_kept_when_only_one_header_overrides(self) -> None:
+        parsed = self._rewrite(
+            "chat",
+            {
+                "text": "hello",
+                "meta": {
+                    "billed_units": {"input_tokens": 4, "output_tokens": 9},
+                    "tokens": {"input_tokens": 40, "output_tokens": 90},
+                },
+            },
+            headers={"X-Amzn-Bedrock-Input-Token-Count": "11"},
+        )
+        self.assertEqual(parsed["meta"]["tokens"]["input_tokens"], 11)
+        self.assertEqual(parsed["meta"]["tokens"]["output_tokens"], 90)
+        self.assertEqual(parsed["meta"]["billed_units"]["output_tokens"], 9)
